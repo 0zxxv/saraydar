@@ -18,21 +18,9 @@ Saraydar Real Estate · exported 22 Oct 2026
 
 ## Important: how the data works
 
-`index.html` stores and reads its data through Claude's built-in database
-(`window.claude.use("db")`). Opened on its own in a browser, or hosted on
-saraydar.com, the page loads but shows "Project data is not available in
-this view", because that database exists only on claude.ai.
-
-To run it on your own domain with usernames and passwords, the data
-layer needs to be connected to your own backend (for example Supabase).
-The changes are contained:
-
-1. Replace the `boot` block at the end of the script with a login screen
-   and calls to your backend.
-2. Replace `db.collection(c).onSnapshot(...)`, `.set(...)` and `.delete(...)`
-   with the equivalent calls of your database.
-3. Import the files in `data/` as the starting records. Field names match
-   the forms in the page exactly.
+On Netlify or any static host, `index.html` loads the starting records from
+`data/all-data.json` and keeps edits in the browser (`localStorage`).
+On Claude, it still uses Claude's built-in database when that API is present.
 
 Everything else (views, calculations, forms, theme) works as is.
 

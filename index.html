@@ -667,6 +667,55 @@ textarea { min-height: 76px; resize: vertical; }
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr[data-edit]')) { e.preventDefault(); openForm(e.target.dataset.edit, e.target.dataset.id); }
   });
 
+  // ---------- local JSON store (Netlify / any static host) ----------
+  function snapshotOf(store, coll) {
+    return {
+      docs: (store[coll] || []).map(row => {
+        const { id, ...data } = row;
+        return { id, exists: true, data: () => ({ ...data }) };
+      })
+    };
+  }
+  function createLocalDb(seed) {
+    const key = 'abq-data';
+    let store = null;
+    try { store = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { store = null; }
+    if (!store || typeof store !== 'object') store = {};
+    for (const c of COLLS) {
+      if (!Array.isArray(store[c])) store[c] = Array.isArray(seed[c]) ? seed[c].map(r => ({ ...r })) : [];
+    }
+    const listeners = {};
+    const persist = () => { try { localStorage.setItem(key, JSON.stringify(store)); } catch (e) {} };
+    const emit = coll => { (listeners[coll] || []).forEach(fn => fn(snapshotOf(store, coll))); };
+    const nid = () => 'id-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    return {
+      collection(coll) {
+        return {
+          onSnapshot(ok) {
+            (listeners[coll] = listeners[coll] || []).push(ok);
+            ok(snapshotOf(store, coll));
+          },
+          doc(id) {
+            const docId = id || nid();
+            return {
+              async set(data) {
+                const list = store[coll] || (store[coll] = []);
+                const i = list.findIndex(d => d.id === docId);
+                const row = { ...data, id: docId };
+                if (i >= 0) list[i] = { ...list[i], ...row }; else list.push(row);
+                persist(); emit(coll);
+              },
+              async delete() {
+                store[coll] = (store[coll] || []).filter(d => d.id !== docId);
+                persist(); emit(coll);
+              }
+            };
+          }
+        };
+      }
+    };
+  }
+
   // ---------- boot ----------
   const fromHash = (location.hash || '').slice(1);
   let saved = ''; try { saved = localStorage.getItem('abq-tab') || ''; } catch (e) {}
@@ -675,13 +724,27 @@ textarea { min-height: 76px; resize: vertical; }
 
   (async () => {
     const cl = window.claude;
-    if (!cl || !cl.use) { dbMissing = true; return render(); }
-    try { db = await cl.use('db'); } catch (e) { db = null; }
-    if (!db) { dbMissing = true; return render(); }
-    try {
-      const user = await cl.use('user');
-      if (user) { const w = await user.can('data.write'); if (w === false) canWrite = false; }
-    } catch (e) {}
+    if (cl && cl.use) {
+      try { db = await cl.use('db'); } catch (e) { db = null; }
+      if (db) {
+        try {
+          const user = await cl.use('user');
+          if (user) { const w = await user.can('data.write'); if (w === false) canWrite = false; }
+        } catch (e) {}
+      }
+    }
+    if (!db) {
+      try {
+        const res = await fetch('data/all-data.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error('seed');
+        db = createLocalDb(await res.json());
+        canWrite = true;
+        dbMissing = false;
+      } catch (e) {
+        dbMissing = true;
+        return render();
+      }
+    }
     for (const c of COLLS) {
       db.collection(c).onSnapshot(snap => {
         state[c] = snap.docs.filter(d => d.exists).map(d => ({ id: d.id, ...d.data() }));
